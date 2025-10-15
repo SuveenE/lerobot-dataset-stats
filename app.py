@@ -4,11 +4,7 @@ from typing import List
 import gradio as gr
 from huggingface_hub import HfApi
 
-from get_dataset_stats import (
-    get_dataset_stats,
-    format_stats_display,
-    compare_metadata_with_actual,
-)
+from get_dataset_stats import get_dataset_stats
 
 
 def search_datasets_fn(query: str) -> List[str]:
@@ -31,48 +27,71 @@ def search_datasets_fn(query: str) -> List[str]:
         return []
 
 
-def fetch_stats_fn(repo_id: str, progress=gr.Progress()):
-    """Fetch dataset statistics"""
-    if not repo_id:
-        return ""
+def fetch_stats_for_selected(selected_datasets: List[str], progress=gr.Progress()):
+    """Fetch statistics for selected datasets"""
+    if not selected_datasets:
+        return "Please select at least one dataset"
     
-    try:
-        progress(0.3, desc="Fetching dataset info...")
-        token = os.environ.get("HF_TOKEN")
-        
-        progress(0.5, desc="Analyzing files...")
-        stats = get_dataset_stats(repo_id, hf_token=token)
-        
-        progress(0.8, desc="Formatting results...")
-        
-        # Format main stats display
-        stats_display = format_stats_display(stats)
-        
-        # Format comparison if metadata exists
-        comparison_display = ""
-        if stats.get("info_metadata"):
-            comparison_display = "\n\n" + compare_metadata_with_actual(stats)
-        
-        # Format episode list (if not too many)
-        episodes_list = ""
-        if stats["episode_numbers"]:
-            episodes = stats["episode_numbers"]
-            if len(episodes) <= 100:
-                episodes_list = f"\n\n**Episode Numbers:** {', '.join(map(str, episodes))}"
+    token = os.environ.get("HF_TOKEN")
+    results = []
+    total_episodes = 0
+    total_parquet_files = 0
+    total_video_files = 0
+    
+    results.append(f"**Fetching stats for {len(selected_datasets)} dataset(s)...**\n")
+    results.append("=" * 80 + "\n")
+    
+    for i, repo_id in enumerate(selected_datasets):
+        try:
+            progress((i + 1) / len(selected_datasets), desc=f"Processing {repo_id}...")
+            stats = get_dataset_stats(repo_id, hf_token=token)
+            
+            results.append(f"\n### {i+1}. {repo_id}")
+            if stats.get("error"):
+                results.append(f"❌ **Error:** {stats['error']}")
             else:
-                episodes_list = f"\n\n**Episode Numbers:** {', '.join(map(str, episodes[:50]))}... (showing first 50 of {len(episodes)})"
-        
-        progress(1.0, desc="Complete!")
-        
-        # Combine all into one output
-        full_output = stats_display + comparison_display + episodes_list
-        return full_output
-        
-    except Exception as e:
-        import traceback
-        error_msg = f"❌ Error fetching stats: {str(e)}\n\n{traceback.format_exc()}"
-        print(error_msg)
-        return error_msg
+                episodes = stats['total_episodes']
+                parquet = stats['total_parquet_files']
+                videos = stats['total_video_files']
+                
+                results.append(f"- **Episodes:** {episodes}")
+                results.append(f"- **Parquet files:** {parquet}")
+                results.append(f"- **Video files:** {videos}")
+                
+                if stats.get("codebase_version"):
+                    results.append(f"- **Version:** {stats['codebase_version']}")
+                
+                # Show episode range if available
+                if stats["episode_numbers"]:
+                    episode_nums = stats["episode_numbers"]
+                    results.append(f"- **Episode range:** {episode_nums[0]} to {episode_nums[-1]}")
+                    
+                    # Check for gaps
+                    expected = list(range(episode_nums[0], episode_nums[-1] + 1))
+                    missing = set(expected) - set(episode_nums)
+                    if missing:
+                        results.append(f"- **⚠️ Missing episodes:** {sorted(list(missing))}")
+                
+                # Add to totals
+                total_episodes += episodes
+                total_parquet_files += parquet
+                total_video_files += videos
+            
+            results.append("")
+            
+        except Exception as e:
+            results.append(f"\n### {i+1}. {repo_id}")
+            results.append(f"❌ **Error:** {str(e)}\n")
+    
+    # Summary
+    results.append("=" * 80)
+    results.append("\n## 📊 **Total Summary**")
+    results.append(f"- **Total Episodes:** {total_episodes}")
+    results.append(f"- **Total Parquet Files:** {total_parquet_files}")
+    results.append(f"- **Total Video Files:** {total_video_files}")
+    results.append(f"- **Datasets Processed:** {len(selected_datasets)}")
+    
+    return "\n".join(results)
 
 
 # Build the Gradio interface
@@ -90,31 +109,33 @@ with gr.Blocks(title="LeRobot Dataset Stats Viewer") as demo:
         )
         load_btn = gr.Button("Load Datasets")
     
-    dataset_dropdown = gr.Dropdown(
-        label="Select dataset",
+    dataset_checkboxes = gr.CheckboxGroup(
+        label="Select datasets",
         choices=_initial_choices,
         interactive=True,
     )
     
+    fetch_btn = gr.Button("Fetch Statistics", variant="primary")
+    
     stats_output = gr.Markdown(
         label="Dataset Statistics",
-        value="Select a dataset to view statistics"
+        value="Select datasets and click 'Fetch Statistics'"
     )
     
     # Event handlers
     def load_datasets_from_org(org_name):
         results = search_datasets_fn(org_name)
-        return gr.update(choices=results, value=None)
+        return gr.update(choices=results, value=[])
     
     load_btn.click(
         load_datasets_from_org,
         inputs=org_input,
-        outputs=dataset_dropdown,
+        outputs=dataset_checkboxes,
     )
     
-    dataset_dropdown.change(
-        fetch_stats_fn,
-        inputs=dataset_dropdown,
+    fetch_btn.click(
+        fetch_stats_for_selected,
+        inputs=dataset_checkboxes,
         outputs=stats_output,
     )
 
