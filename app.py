@@ -46,13 +46,13 @@ def fetch_stats_for_selected(selected_datasets: List[str], progress=gr.Progress(
             else:
                 episodes = stats['total_episodes']
                 total_episodes += episodes
-                results.append(f"{repo_id}: {episodes} episodes")
+                results.append(f"{repo_id}: **{episodes}** episodes")
             
         except Exception as e:
             results.append(f"❌ {repo_id}: Error - {str(e)}")
     
-    # Build output with total at top
-    output = [f"**Total Episodes: {total_episodes}**\n"]
+    # Build output with total at top (larger font)
+    output = [f"## Total Episodes: {total_episodes}\n"]
     output.extend(results)
     
     return "\n".join(output)
