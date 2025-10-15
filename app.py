@@ -35,63 +35,27 @@ def fetch_stats_for_selected(selected_datasets: List[str], progress=gr.Progress(
     token = os.environ.get("HF_TOKEN")
     results = []
     total_episodes = 0
-    total_parquet_files = 0
-    total_video_files = 0
-    
-    results.append(f"**Fetching stats for {len(selected_datasets)} dataset(s)...**\n")
-    results.append("=" * 80 + "\n")
     
     for i, repo_id in enumerate(selected_datasets):
         try:
             progress((i + 1) / len(selected_datasets), desc=f"Processing {repo_id}...")
             stats = get_dataset_stats(repo_id, hf_token=token)
             
-            results.append(f"\n### {i+1}. {repo_id}")
             if stats.get("error"):
-                results.append(f"❌ **Error:** {stats['error']}")
+                results.append(f"❌ {repo_id}: Error - {stats['error']}")
             else:
                 episodes = stats['total_episodes']
-                parquet = stats['total_parquet_files']
-                videos = stats['total_video_files']
-                
-                results.append(f"- **Episodes:** {episodes}")
-                results.append(f"- **Parquet files:** {parquet}")
-                results.append(f"- **Video files:** {videos}")
-                
-                if stats.get("codebase_version"):
-                    results.append(f"- **Version:** {stats['codebase_version']}")
-                
-                # Show episode range if available
-                if stats["episode_numbers"]:
-                    episode_nums = stats["episode_numbers"]
-                    results.append(f"- **Episode range:** {episode_nums[0]} to {episode_nums[-1]}")
-                    
-                    # Check for gaps
-                    expected = list(range(episode_nums[0], episode_nums[-1] + 1))
-                    missing = set(expected) - set(episode_nums)
-                    if missing:
-                        results.append(f"- **⚠️ Missing episodes:** {sorted(list(missing))}")
-                
-                # Add to totals
                 total_episodes += episodes
-                total_parquet_files += parquet
-                total_video_files += videos
-            
-            results.append("")
+                results.append(f"{repo_id}: {episodes} episodes")
             
         except Exception as e:
-            results.append(f"\n### {i+1}. {repo_id}")
-            results.append(f"❌ **Error:** {str(e)}\n")
+            results.append(f"❌ {repo_id}: Error - {str(e)}")
     
-    # Summary
-    results.append("=" * 80)
-    results.append("\n## 📊 **Total Summary**")
-    results.append(f"- **Total Episodes:** {total_episodes}")
-    results.append(f"- **Total Parquet Files:** {total_parquet_files}")
-    results.append(f"- **Total Video Files:** {total_video_files}")
-    results.append(f"- **Datasets Processed:** {len(selected_datasets)}")
+    # Build output with total at top
+    output = [f"**Total Episodes: {total_episodes}**\n"]
+    output.extend(results)
     
-    return "\n".join(results)
+    return "\n".join(output)
 
 
 # Build the Gradio interface
