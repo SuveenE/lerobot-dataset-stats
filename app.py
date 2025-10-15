@@ -55,7 +55,7 @@ def fetch_stats_for_selected(selected_datasets: List[str], progress=gr.Progress(
     output = [f"## Total Episodes: {total_episodes}\n"]
     output.extend(results)
     
-    return "\n".join(output)
+    return "\n\n".join(output)
 
 
 # Build the Gradio interface
