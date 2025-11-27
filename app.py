@@ -128,6 +128,19 @@ def fetch_stats_for_selected(selected_datasets: List[str], progress=gr.Progress(
         if 'unknown' in v3_by_date:
             sorted_dates.append('unknown')
         
+        def format_duration(seconds):
+            """Format duration as hours, minutes, seconds"""
+            hours = int(seconds // 3600)
+            minutes = int((seconds % 3600) // 60)
+            secs = int(seconds % 60)
+            
+            if hours > 0:
+                return f"{hours}h {minutes}m {secs}s"
+            elif minutes > 0:
+                return f"{minutes}m {secs}s"
+            else:
+                return f"{secs}s"
+        
         for date_key in sorted_dates:
             datasets = v3_by_date[date_key]
             date_display = datasets[0]['date_display']
@@ -142,12 +155,7 @@ def fetch_stats_for_selected(selected_datasets: List[str], progress=gr.Progress(
                     date_total_seconds += info_meta['total_frames'] / fps
             
             # Format total duration
-            if date_total_seconds >= 60:
-                total_minutes = int(date_total_seconds // 60)
-                total_seconds = int(date_total_seconds % 60)
-                duration_str = f" • {total_minutes}m {total_seconds}s"
-            else:
-                duration_str = f" • {int(date_total_seconds)}s"
+            duration_str = f" • {format_duration(date_total_seconds)}"
             
             output.append(f"**{date_display}** — Total: **{date_total_episodes} episodes**{duration_str}")
             
@@ -157,24 +165,16 @@ def fetch_stats_for_selected(selected_datasets: List[str], progress=gr.Progress(
                 
                 # Add metadata if available
                 info_meta = dataset['stats'].get('info_metadata', {})
-                extra_info = []
                 
                 # Calculate duration in seconds from frames
+                duration_str = ""
                 if info_meta.get('total_frames'):
                     total_frames = info_meta['total_frames']
                     fps = info_meta.get('fps', 30)  # Default to 30 if not specified
                     duration_seconds = total_frames / fps
-                    
-                    # Format duration nicely
-                    if duration_seconds >= 60:
-                        minutes = int(duration_seconds // 60)
-                        seconds = int(duration_seconds % 60)
-                        extra_info.append(f"{minutes}m {seconds}s")
-                    else:
-                        extra_info.append(f"{int(duration_seconds)}s")
+                    duration_str = f" • {format_duration(duration_seconds)}"
                 
-                extra_str = f" • {', '.join(extra_info)}" if extra_info else ""
-                output.append(f"  • `{repo_name}`: **{episodes} episodes**{extra_str}")
+                output.append(f"  • `{repo_name}`: **{episodes} episodes**{duration_str}")
             
             output.append("")  # Empty line between dates
     
