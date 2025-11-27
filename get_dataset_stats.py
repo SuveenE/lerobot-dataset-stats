@@ -17,6 +17,8 @@ def get_dataset_stats(
 ) -> Dict[str, Any]:
     """Get statistics for a Hugging Face dataset without downloading all files.
     
+    Supports both v2.1 and v3.0 LeRobot dataset formats.
+    
     Args:
         repo_id: The HuggingFace dataset repo ID
         hf_token: Optional HuggingFace token for private datasets
@@ -28,7 +30,9 @@ def get_dataset_stats(
         - total_parquet_files: Total number of parquet files
         - total_video_files: Total number of video files (if present)
         - info_metadata: Metadata from info.json (if present)
+        - episodes_metadata: Metadata from episodes.json (v3.0 only)
         - codebase_version: Dataset version (if present)
+        - format_version: Detected format version (v2.1 or v3.0)
     """
     api = HfApi()
     token = hf_token or os.environ.get("HF_TOKEN")
@@ -42,34 +46,14 @@ def get_dataset_stats(
         "total_parquet_files": 0,
         "total_video_files": 0,
         "info_metadata": None,
+        "episodes_metadata": None,
         "codebase_version": None,
+        "format_version": None,
         "error": None,
     }
     
     try:
-        # List all files in the repository
-        files = api.list_repo_files(repo_id=repo_id, repo_type="dataset", token=token)
-        
-        # Count parquet files and extract episode numbers
-        parquet_pattern = re.compile(r"data/chunk-\d+/episode_(\d+)\.parquet")
-        episode_numbers = set()
-        
-        for file_path in files:
-            match = parquet_pattern.search(file_path)
-            if match:
-                episode_num = int(match.group(1))
-                episode_numbers.add(episode_num)
-                stats["total_parquet_files"] += 1
-            
-            # Count video files
-            if file_path.endswith(".mp4") and "episode_" in file_path:
-                stats["total_video_files"] += 1
-        
-        # Sort episode numbers and update stats
-        stats["episode_numbers"] = sorted(list(episode_numbers))
-        stats["total_episodes"] = len(episode_numbers)
-        
-        # Try to fetch metadata from info.json
+        # Try to fetch metadata from info.json first to determine version
         try:
             info_path = hf_hub_download(
                 repo_id=repo_id,
@@ -87,8 +71,79 @@ def get_dataset_stats(
         except Exception as e:
             logger.warning(f"Could not fetch info.json: {str(e)}")
         
+        # Try to fetch episodes.json (v3.0 format)
+        try:
+            episodes_path = hf_hub_download(
+                repo_id=repo_id,
+                filename="meta/episodes.json",
+                repo_type="dataset",
+                token=token,
+            )
+            
+            with open(episodes_path, "r") as f:
+                episodes_data = json.load(f)
+                stats["episodes_metadata"] = episodes_data
+                stats["format_version"] = "v3.0"
+                
+                # In v3.0, episodes.json contains episode information
+                # It's typically a list of episode metadata
+                if isinstance(episodes_data, list):
+                    stats["total_episodes"] = len(episodes_data)
+                    stats["episode_numbers"] = list(range(len(episodes_data)))
+                elif isinstance(episodes_data, dict):
+                    # Handle different possible structures
+                    if "episodes" in episodes_data:
+                        episodes_list = episodes_data["episodes"]
+                        stats["total_episodes"] = len(episodes_list)
+                        stats["episode_numbers"] = list(range(len(episodes_list)))
+                    else:
+                        # Fallback: count keys
+                        stats["total_episodes"] = len(episodes_data)
+                        stats["episode_numbers"] = sorted([int(k) for k in episodes_data.keys() if k.isdigit()])
+                
+            logger.info("Successfully fetched episodes.json - detected v3.0 format")
+        except Exception as e:
+            logger.info(f"Could not fetch episodes.json (may be v2.1 format): {str(e)}")
+            stats["format_version"] = "v2.1"
+        
+        # List all files in the repository
+        files = api.list_repo_files(repo_id=repo_id, repo_type="dataset", token=token)
+        
+        # Detect format and count files based on version
+        if stats["format_version"] == "v3.0":
+            # v3.0 format: file-XXXX.parquet and file-XXXX.mp4
+            parquet_pattern = re.compile(r"data/.+/file[-_]\d+\.parquet")
+            video_pattern = re.compile(r"videos/.+/file[-_]\d+\.mp4")
+            
+            for file_path in files:
+                if parquet_pattern.search(file_path):
+                    stats["total_parquet_files"] += 1
+                elif video_pattern.search(file_path):
+                    stats["total_video_files"] += 1
+        else:
+            # v2.1 format: episode_XXXX.parquet and episode_XXXX.mp4
+            parquet_pattern = re.compile(r"data/chunk-\d+/episode_(\d+)\.parquet")
+            episode_numbers = set()
+            
+            for file_path in files:
+                match = parquet_pattern.search(file_path)
+                if match:
+                    episode_num = int(match.group(1))
+                    episode_numbers.add(episode_num)
+                    stats["total_parquet_files"] += 1
+                
+                # Count video files (v2.1 format)
+                if file_path.endswith(".mp4") and "episode_" in file_path:
+                    stats["total_video_files"] += 1
+            
+            # Update stats if we didn't get episodes from episodes.json
+            if episode_numbers:
+                stats["episode_numbers"] = sorted(list(episode_numbers))
+                stats["total_episodes"] = len(episode_numbers)
+        
         logger.info(
-            f"Stats for {repo_id}: {stats['total_episodes']} episodes, "
+            f"Stats for {repo_id} ({stats['format_version']}): "
+            f"{stats['total_episodes']} episodes, "
             f"{stats['total_parquet_files']} parquet files, "
             f"{stats['total_video_files']} video files"
         )
@@ -117,25 +172,32 @@ def format_stats_display(stats: Dict[str, Any]) -> str:
     lines.append(f"📊 **Dataset Statistics for {stats['repo_id']}**")
     lines.append("")
     
-    # Basic stats
-    lines.append(f"**Total Episodes:** {stats['total_episodes']}")
-    lines.append(f"**Total Parquet Files:** {stats['total_parquet_files']}")
-    lines.append(f"**Total Video Files:** {stats['total_video_files']}")
+    # Format version
+    if stats.get("format_version"):
+        lines.append(f"**Format Version:** {stats['format_version']}")
     
     # Version info
     if stats.get("codebase_version"):
         lines.append(f"**Codebase Version:** {stats['codebase_version']}")
     
-    # Episode range
-    if stats["episode_numbers"]:
+    lines.append("")
+    
+    # Basic stats
+    lines.append(f"**Total Episodes:** {stats['total_episodes']}")
+    lines.append(f"**Total Parquet Files:** {stats['total_parquet_files']}")
+    lines.append(f"**Total Video Files:** {stats['total_video_files']}")
+    
+    # Episode range (mainly for v2.1 or when episode numbers are sequential)
+    if stats["episode_numbers"] and len(stats["episode_numbers"]) > 0:
         episode_nums = stats["episode_numbers"]
         lines.append(f"**Episode Range:** {episode_nums[0]} to {episode_nums[-1]}")
         
-        # Check for gaps in episodes
-        expected = list(range(episode_nums[0], episode_nums[-1] + 1))
-        missing = set(expected) - set(episode_nums)
-        if missing:
-            lines.append(f"**⚠️ Missing Episodes:** {sorted(list(missing))}")
+        # Check for gaps in episodes (only for v2.1)
+        if stats.get("format_version") == "v2.1":
+            expected = list(range(episode_nums[0], episode_nums[-1] + 1))
+            missing = set(expected) - set(episode_nums)
+            if missing:
+                lines.append(f"**⚠️ Missing Episodes:** {sorted(list(missing))}")
     
     # Additional metadata from info.json
     if stats.get("info_metadata"):

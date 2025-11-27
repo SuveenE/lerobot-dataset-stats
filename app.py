@@ -63,13 +63,13 @@ with gr.Blocks(title="LeRobot Dataset Stats Viewer") as demo:
     gr.Markdown("**View statistics for Hugging Face datasets (LeRobot format).**")
     
     # Load initial datasets
-    _initial_choices = search_datasets_fn("griffinlabs-cortex")
+    _initial_choices = search_datasets_fn("")
     
     with gr.Row():
         org_input = gr.Textbox(
-            label="Organization or keyword",
-            value="griffinlabs-cortex",
-            placeholder="e.g., lerobot, griffinlabs-cortex"
+            label="Organization",
+            value="",
+            placeholder="e.g., cortexairobot"
         )
         load_btn = gr.Button("Load Datasets")
     
