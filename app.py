@@ -117,8 +117,31 @@ def fetch_stats_for_selected(selected_datasets: List[str], progress=gr.Progress(
         except Exception as e:
             errors.append(f"❌ {repo_id}: Error - {str(e)}")
     
-    # Build output
-    output = [f"## Total Episodes: {total_episodes}\n"]
+    def format_duration(seconds):
+        """Format duration as hours, minutes, seconds"""
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        
+        if hours > 0:
+            return f"{hours}h {minutes}m {secs}s"
+        elif minutes > 0:
+            return f"{minutes}m {secs}s"
+        else:
+            return f"{secs}s"
+    
+    # Calculate total duration across all datasets
+    total_duration_seconds = 0
+    for datasets in v3_by_date.values():
+        for d in datasets:
+            info_meta = d['stats'].get('info_metadata', {})
+            if info_meta.get('total_frames'):
+                fps = info_meta.get('fps', 30)
+                total_duration_seconds += info_meta['total_frames'] / fps
+    
+    # Build output with total episodes and duration
+    duration_display = f" • {format_duration(total_duration_seconds)}" if total_duration_seconds > 0 else ""
+    output = [f"## Total Episodes: {total_episodes}{duration_display}\n"]
     
     # Display v3 datasets grouped by date
     if v3_by_date:
@@ -127,19 +150,6 @@ def fetch_stats_for_selected(selected_datasets: List[str], progress=gr.Progress(
         sorted_dates = sorted([k for k in v3_by_date.keys() if k != 'unknown'], reverse=True)
         if 'unknown' in v3_by_date:
             sorted_dates.append('unknown')
-        
-        def format_duration(seconds):
-            """Format duration as hours, minutes, seconds"""
-            hours = int(seconds // 3600)
-            minutes = int((seconds % 3600) // 60)
-            secs = int(seconds % 60)
-            
-            if hours > 0:
-                return f"{hours}h {minutes}m {secs}s"
-            elif minutes > 0:
-                return f"{minutes}m {secs}s"
-            else:
-                return f"{secs}s"
         
         for date_key in sorted_dates:
             datasets = v3_by_date[date_key]
@@ -157,7 +167,7 @@ def fetch_stats_for_selected(selected_datasets: List[str], progress=gr.Progress(
             # Format total duration
             duration_str = f" • {format_duration(date_total_seconds)}"
             
-            output.append(f"**{date_display}** — Total: **{date_total_episodes} episodes**{duration_str}")
+            output.append(f"\n**{date_display}** — Total: **{date_total_episodes} episodes**{duration_str}")
             
             for dataset in sorted(datasets, key=lambda x: x['repo_id']):
                 repo_name = dataset['repo_id'].split('/')[-1]  # Just the dataset name
@@ -174,19 +184,15 @@ def fetch_stats_for_selected(selected_datasets: List[str], progress=gr.Progress(
                     duration_seconds = total_frames / fps
                     duration_str = f" • {format_duration(duration_seconds)}"
                 
-                output.append(f"  • `{repo_name}`: **{episodes} episodes**{duration_str}")
-            
-            output.append("")  # Empty line between dates
+                output.append(f"- `{repo_name}`: **{episodes} episodes**{duration_str}")
     
     # Display non-v3 datasets
     if non_v3_results:
-        output.append("### 📦 v2.1 Datasets\n")
         output.extend(non_v3_results)
-        output.append("")
     
     # Display errors at the end
     if errors:
-        output.append("### ⚠️ Errors\n")
+        output.append("\n### ⚠️ Errors")
         output.extend(errors)
     
     return "\n".join(output)
