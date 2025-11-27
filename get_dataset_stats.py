@@ -25,12 +25,11 @@ def get_dataset_stats(
         
     Returns:
         Dictionary containing dataset statistics:
-        - total_episodes: Number of episodes in the dataset
+        - total_episodes: Number of episodes (from info.json for v3.0, or counted for v2.1)
         - episode_numbers: List of episode numbers found
         - total_parquet_files: Total number of parquet files
         - total_video_files: Total number of video files (if present)
-        - info_metadata: Metadata from info.json (if present)
-        - episodes_metadata: Metadata from episodes.json (v3.0 only)
+        - info_metadata: Complete metadata from info.json (if present)
         - codebase_version: Dataset version (if present)
         - format_version: Detected format version (v2.1 or v3.0)
     """
@@ -46,7 +45,6 @@ def get_dataset_stats(
         "total_parquet_files": 0,
         "total_video_files": 0,
         "info_metadata": None,
-        "episodes_metadata": None,
         "codebase_version": None,
         "format_version": None,
         "error": None,
@@ -67,43 +65,23 @@ def get_dataset_stats(
                 stats["info_metadata"] = info_data
                 stats["codebase_version"] = info_data.get("codebase_version")
                 
+                # Determine format version from codebase_version
+                if stats["codebase_version"] and stats["codebase_version"].startswith("v3"):
+                    stats["format_version"] = "v3.0"
+                    # In v3.0, total_episodes is in info.json
+                    stats["total_episodes"] = info_data.get("total_episodes", 0)
+                    # Generate episode numbers list
+                    if stats["total_episodes"] > 0:
+                        stats["episode_numbers"] = list(range(stats["total_episodes"]))
+                    logger.info(f"Detected v3.0 format with {stats['total_episodes']} episodes from info.json")
+                else:
+                    stats["format_version"] = "v2.1"
+                    logger.info("Detected v2.1 format")
+                
             logger.info("Successfully fetched metadata from info.json")
         except Exception as e:
             logger.warning(f"Could not fetch info.json: {str(e)}")
-        
-        # Try to fetch episodes.json (v3.0 format)
-        try:
-            episodes_path = hf_hub_download(
-                repo_id=repo_id,
-                filename="meta/episodes.json",
-                repo_type="dataset",
-                token=token,
-            )
-            
-            with open(episodes_path, "r") as f:
-                episodes_data = json.load(f)
-                stats["episodes_metadata"] = episodes_data
-                stats["format_version"] = "v3.0"
-                
-                # In v3.0, episodes.json contains episode information
-                # It's typically a list of episode metadata
-                if isinstance(episodes_data, list):
-                    stats["total_episodes"] = len(episodes_data)
-                    stats["episode_numbers"] = list(range(len(episodes_data)))
-                elif isinstance(episodes_data, dict):
-                    # Handle different possible structures
-                    if "episodes" in episodes_data:
-                        episodes_list = episodes_data["episodes"]
-                        stats["total_episodes"] = len(episodes_list)
-                        stats["episode_numbers"] = list(range(len(episodes_list)))
-                    else:
-                        # Fallback: count keys
-                        stats["total_episodes"] = len(episodes_data)
-                        stats["episode_numbers"] = sorted([int(k) for k in episodes_data.keys() if k.isdigit()])
-                
-            logger.info("Successfully fetched episodes.json - detected v3.0 format")
-        except Exception as e:
-            logger.info(f"Could not fetch episodes.json (may be v2.1 format): {str(e)}")
+            # Assume v2.1 if we can't read info.json
             stats["format_version"] = "v2.1"
         
         # List all files in the repository
@@ -111,9 +89,9 @@ def get_dataset_stats(
         
         # Detect format and count files based on version
         if stats["format_version"] == "v3.0":
-            # v3.0 format: file-XXXX.parquet and file-XXXX.mp4
-            parquet_pattern = re.compile(r"data/.+/file[-_]\d+\.parquet")
-            video_pattern = re.compile(r"videos/.+/file[-_]\d+\.mp4")
+            # v3.0 format: data/chunk-XXX/file-XXX.parquet and videos/{camera}/chunk-XXX/file-XXX.mp4
+            parquet_pattern = re.compile(r"data/chunk-\d+/file-\d+\.parquet")
+            video_pattern = re.compile(r"videos/.+/chunk-\d+/file-\d+\.mp4")
             
             for file_path in files:
                 if parquet_pattern.search(file_path):
@@ -136,7 +114,7 @@ def get_dataset_stats(
                 if file_path.endswith(".mp4") and "episode_" in file_path:
                     stats["total_video_files"] += 1
             
-            # Update stats if we didn't get episodes from episodes.json
+            # Update stats if we didn't get episodes from info.json
             if episode_numbers:
                 stats["episode_numbers"] = sorted(list(episode_numbers))
                 stats["total_episodes"] = len(episode_numbers)
@@ -205,15 +183,27 @@ def format_stats_display(stats: Dict[str, Any]) -> str:
         lines.append("")
         lines.append("**Metadata from info.json:**")
         
-        # Show key metadata fields
-        metadata_fields = [
-            ("fps", "FPS"),
-            ("robot_type", "Robot Type"),
-            ("total_episodes", "Total Episodes (from metadata)"),
-            ("total_videos", "Total Videos (from metadata)"),
-            ("total_tasks", "Total Tasks"),
-            ("total_frames", "Total Frames"),
-        ]
+        # Show key metadata fields (v3.0 has more fields)
+        if stats.get("format_version") == "v3.0":
+            metadata_fields = [
+                ("fps", "FPS"),
+                ("robot_type", "Robot Type"),
+                ("total_frames", "Total Frames"),
+                ("total_tasks", "Total Tasks"),
+                ("chunks_size", "Chunks Size"),
+                ("data_files_size_in_mb", "Data Files Size (MB)"),
+                ("video_files_size_in_mb", "Video Files Size (MB)"),
+            ]
+        else:
+            # v2.1 fields
+            metadata_fields = [
+                ("fps", "FPS"),
+                ("robot_type", "Robot Type"),
+                ("total_episodes", "Total Episodes (from metadata)"),
+                ("total_videos", "Total Videos (from metadata)"),
+                ("total_tasks", "Total Tasks"),
+                ("total_frames", "Total Frames"),
+            ]
         
         for key, label in metadata_fields:
             if key in info:
