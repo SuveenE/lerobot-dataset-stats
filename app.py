@@ -58,8 +58,16 @@ def fetch_stats_for_selected(selected_datasets: List[str], progress=gr.Progress(
         return "Please select at least one dataset"
     
     token = os.environ.get("HF_TOKEN")
-    results = []
     total_episodes = 0
+    
+    # Separate v3 and non-v3 datasets, organize by date
+    from collections import defaultdict
+    import re
+    from datetime import datetime
+    
+    v3_by_date = defaultdict(list)  # date -> list of (repo_id, episodes, stats)
+    non_v3_results = []
+    errors = []
     
     for i, repo_id in enumerate(selected_datasets):
         try:
@@ -67,20 +75,96 @@ def fetch_stats_for_selected(selected_datasets: List[str], progress=gr.Progress(
             stats = get_dataset_stats(repo_id, hf_token=token)
             
             if stats.get("error"):
-                results.append(f"❌ {repo_id}: Error - {stats['error']}")
+                errors.append(f"❌ {repo_id}: Error - {stats['error']}")
             else:
                 episodes = stats['total_episodes']
                 total_episodes += episodes
-                results.append(f"{repo_id}: **{episodes}** episodes")
+                
+                # Check if v3 format
+                is_v3 = stats.get("format_version") == "v3.0"
+                
+                if is_v3:
+                    # Try to extract date from repo_id (format: org/DDMMYYYY-name)
+                    date_match = re.search(r'/(\d{8})', repo_id)
+                    if date_match:
+                        date_str = date_match.group(1)
+                        try:
+                            # Parse as DDMMYYYY
+                            date_obj = datetime.strptime(date_str, '%d%m%Y')
+                            date_key = date_obj.strftime('%Y-%m-%d')  # ISO format for sorting
+                            date_display = date_obj.strftime('%B %d, %Y')  # Nice display format
+                        except ValueError:
+                            date_key = date_str
+                            date_display = date_str
+                        
+                        v3_by_date[date_key].append({
+                            'repo_id': repo_id,
+                            'episodes': episodes,
+                            'date_display': date_display,
+                            'stats': stats
+                        })
+                    else:
+                        # v3 but no date in name
+                        v3_by_date['unknown'].append({
+                            'repo_id': repo_id,
+                            'episodes': episodes,
+                            'date_display': 'Unknown Date',
+                            'stats': stats
+                        })
+                else:
+                    non_v3_results.append(f"{repo_id}: **{episodes}** episodes")
             
         except Exception as e:
-            results.append(f"❌ {repo_id}: Error - {str(e)}")
+            errors.append(f"❌ {repo_id}: Error - {str(e)}")
     
-    # Build output with total at top (larger font)
+    # Build output
     output = [f"## Total Episodes: {total_episodes}\n"]
-    output.extend(results)
     
-    return "\n\n".join(output)
+    # Display v3 datasets grouped by date
+    if v3_by_date:
+        output.append("### 📅 v3.0 Datasets by Date\n")
+        
+        # Sort dates (most recent first)
+        sorted_dates = sorted([k for k in v3_by_date.keys() if k != 'unknown'], reverse=True)
+        if 'unknown' in v3_by_date:
+            sorted_dates.append('unknown')
+        
+        for date_key in sorted_dates:
+            datasets = v3_by_date[date_key]
+            date_display = datasets[0]['date_display']
+            date_total = sum(d['episodes'] for d in datasets)
+            
+            output.append(f"**{date_display}** — Total: **{date_total} episodes**")
+            
+            for dataset in sorted(datasets, key=lambda x: x['repo_id']):
+                repo_name = dataset['repo_id'].split('/')[-1]  # Just the dataset name
+                episodes = dataset['episodes']
+                
+                # Add metadata if available
+                info_meta = dataset['stats'].get('info_metadata', {})
+                extra_info = []
+                if info_meta.get('total_frames'):
+                    extra_info.append(f"{info_meta['total_frames']:,} frames")
+                if info_meta.get('robot_type'):
+                    extra_info.append(f"{info_meta['robot_type']}")
+                
+                extra_str = f" ({', '.join(extra_info)})" if extra_info else ""
+                output.append(f"  • `{repo_name}`: {episodes} episodes{extra_str}")
+            
+            output.append("")  # Empty line between dates
+    
+    # Display non-v3 datasets
+    if non_v3_results:
+        output.append("### 📦 v2.1 Datasets\n")
+        output.extend(non_v3_results)
+        output.append("")
+    
+    # Display errors at the end
+    if errors:
+        output.append("### ⚠️ Errors\n")
+        output.extend(errors)
+    
+    return "\n".join(output)
 
 
 # Build the Gradio interface
@@ -90,6 +174,9 @@ with gr.Blocks(title="LeRobot Dataset Stats Viewer") as demo:
     # Get user's organizations
     _user_orgs = get_user_organizations()
     _initial_datasets = search_datasets_fn(_user_orgs[0]) if _user_orgs else []
+    
+    # State to track current dataset choices
+    current_choices = gr.State(_initial_datasets)
     
     with gr.Row():
         org_dropdown = gr.Dropdown(
@@ -120,32 +207,28 @@ with gr.Blocks(title="LeRobot Dataset Stats Viewer") as demo:
     # Event handlers
     def load_datasets_from_org(org_name):
         results = search_datasets_fn(org_name)
-        return gr.update(choices=results, value=[])
-    
-    def select_all_datasets(current_choices):
-        # Get all available choices from the checkbox group
-        return current_choices
-    
-    def deselect_all_datasets():
-        return []
+        return [
+            gr.update(choices=results, value=[]),  # Update checkboxes
+            results  # Update state
+        ]
     
     # Load datasets on button click or dropdown change
     load_btn.click(
         load_datasets_from_org,
         inputs=org_dropdown,
-        outputs=dataset_checkboxes,
+        outputs=[dataset_checkboxes, current_choices],
     )
     
     org_dropdown.change(
         load_datasets_from_org,
         inputs=org_dropdown,
-        outputs=dataset_checkboxes,
+        outputs=[dataset_checkboxes, current_choices],
     )
     
     # Select/Deselect all buttons
     select_all_btn.click(
         lambda choices: gr.update(value=choices),
-        inputs=dataset_checkboxes,
+        inputs=current_choices,
         outputs=dataset_checkboxes,
     )
     
