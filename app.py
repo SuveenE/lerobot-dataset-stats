@@ -46,7 +46,7 @@ def search_datasets_fn(org_name: str) -> List[str]:
             if r not in seen:
                 unique.append(r)
                 seen.add(r)
-        return unique[:500]
+        return unique[:1000]
     except Exception as e:
         print(f"Error searching datasets: {e}")
         return []
