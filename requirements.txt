@@ -16,8 +16,6 @@ ffmpy==0.6.1
 filelock==3.19.1
 frozenlist==1.7.0
 fsspec==2025.9.0
-gradio==5.47.0
-gradio_client==1.13.2
 groovy==0.1.2
 h11==0.16.0
 hf-xet==1.1.10
