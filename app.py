@@ -112,7 +112,11 @@ def fetch_stats_for_selected(selected_datasets: List[str], progress=gr.Progress(
                             'stats': stats
                         })
                 else:
-                    non_v3_results.append(f"{repo_id}: **{episodes}** episodes")
+                    non_v3_results.append({
+                        'repo_id': repo_id,
+                        'episodes': episodes,
+                        'stats': stats
+                    })
             
         except Exception as e:
             errors.append(f"❌ {repo_id}: Error - {str(e)}")
@@ -130,14 +134,19 @@ def fetch_stats_for_selected(selected_datasets: List[str], progress=gr.Progress(
         else:
             return f"{secs}s"
     
-    # Calculate total duration across all datasets
+    # Calculate total duration across all datasets (v3 and v2)
     total_duration_seconds = 0
     for datasets in v3_by_date.values():
         for d in datasets:
-            info_meta = d['stats'].get('info_metadata', {})
+            info_meta = d['stats'].get('info_metadata', {}) or {}
             if info_meta.get('total_frames'):
                 fps = info_meta.get('fps', 30)
                 total_duration_seconds += info_meta['total_frames'] / fps
+    for d in non_v3_results:
+        info_meta = d['stats'].get('info_metadata', {}) or {}
+        if info_meta.get('total_frames'):
+            fps = info_meta.get('fps', 30)
+            total_duration_seconds += info_meta['total_frames'] / fps
     
     # Build output with total episodes and duration
     duration_display = f" • {format_duration(total_duration_seconds)}" if total_duration_seconds > 0 else ""
@@ -188,7 +197,15 @@ def fetch_stats_for_selected(selected_datasets: List[str], progress=gr.Progress(
     
     # Display non-v3 datasets
     if non_v3_results:
-        output.extend(non_v3_results)
+        for d in non_v3_results:
+            info_meta = d['stats'].get('info_metadata', {}) or {}
+            duration_str = ""
+            if info_meta.get('total_frames'):
+                total_frames = info_meta['total_frames']
+                fps = info_meta.get('fps', 30)
+                duration_seconds = total_frames / fps
+                duration_str = f" • {format_duration(duration_seconds)}"
+            output.append(f"{d['repo_id']}: **{d['episodes']}** episodes{duration_str}")
     
     # Display errors at the end
     if errors:
