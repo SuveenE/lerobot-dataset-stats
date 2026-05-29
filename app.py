@@ -7,6 +7,14 @@ from huggingface_hub import HfApi
 from get_dataset_stats import get_dataset_stats
 
 
+def get_space_owner() -> str:
+    """Get the org/user that owns the current HF Space, if running on Spaces."""
+    space_id = os.environ.get("SPACE_ID", "")
+    if "/" in space_id:
+        return space_id.split("/", 1)[0]
+    return os.environ.get("SPACE_AUTHOR_NAME", "")
+
+
 def get_user_organizations() -> List[str]:
     """Get organizations the user is part of"""
     api = HfApi()
@@ -25,6 +33,14 @@ def get_user_organizations() -> List[str]:
     except Exception as e:
         print(f"Error getting user organizations: {e}")
         return []
+
+
+def get_default_org(orgs: List[str]) -> str:
+    """Pick the default org: the Space's owner if available, else the first org."""
+    space_owner = get_space_owner()
+    if space_owner and space_owner in orgs:
+        return space_owner
+    return orgs[0] if orgs else None
 
 
 def search_datasets_fn(org_name: str) -> List[str]:
@@ -221,7 +237,8 @@ with gr.Blocks(title="LeRobot Dataset Stats Viewer") as demo:
     
     # Get user's organizations
     _user_orgs = get_user_organizations()
-    _initial_datasets = search_datasets_fn(_user_orgs[0]) if _user_orgs else []
+    _default_org = get_default_org(_user_orgs)
+    _initial_datasets = search_datasets_fn(_default_org) if _default_org else []
     
     # State to track current dataset choices
     current_choices = gr.State(_initial_datasets)
@@ -230,7 +247,7 @@ with gr.Blocks(title="LeRobot Dataset Stats Viewer") as demo:
         org_dropdown = gr.Dropdown(
             label="Select Organization",
             choices=_user_orgs,
-            value=_user_orgs[0] if _user_orgs else None,
+            value=_default_org,
             interactive=True,
         )
         load_btn = gr.Button("Load Datasets", variant="secondary")
